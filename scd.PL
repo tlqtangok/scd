@@ -1,5 +1,5 @@
 #!perl
-# written by jidor at 2019-1-19
+# written by jidor at 2019-12-02
 use strict ;
 use feature qw(say);
 use List::Util qw(first sum max shuffle maxstr);
