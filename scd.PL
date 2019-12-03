@@ -111,7 +111,7 @@ sub main()
 {
     #my $fn_run_cluster_task_log = "run_cluster_task.log";  `rm $fn_run_cluster_task_log ` if -e $fn_run_cluster_task_log;
     # redis-cli -h algoers.com  set cluster_task 'date'
-
+    &check_deps();
     &run_subtask_if_needed(\@ARGV);
 
 
@@ -280,6 +280,21 @@ sub main()
 
 
 ### sub list ###
+sub check_deps()
+{
+    my $prog_name = $0; 
+    if ($prog_name =~ m/slave|submit/)
+    {
+        my $cmd_run_this_instance = "pgrep -f $prog_name -al"; 
+        my @ans_ = `$cmd_run_this_instance`; 
+        if ( @ans_ >= 2 )
+        {
+            $prog_name =~ s/\.PL//; 
+            &assert_use_die(0==1, "- already run [$prog_name] on this machine ! \n"); 
+        }
+    }
+}
+
 sub assert_use_die($, $)
 {
 	my $equ_or_not = shift; 
