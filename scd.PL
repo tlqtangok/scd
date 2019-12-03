@@ -148,7 +148,7 @@ sub main()
         {
             # redis-cli -h algoers.com set cluster_task '172.16.166.224:date'
             #say "- ok, @arr_cmd"; 
-            my $task = $arr_cmd[-1];  
+            my $task = $arr_cmd[-1];  $task =~ s|\s+$||;
             my $client_ip = &pick_one_idle_cluster_ip();
 
             if ($client_ip eq $client_ip_r0)
@@ -417,37 +417,3 @@ sub get_timestamp()
 	return $time_stamp;
 }
 
-sub gen_block($idx, $data, $pre_hash)
-{
-	my ($idx, $data, $pre_hash) = @_;
-	if ( $idx == 0 )
-	{
-		my ($t0, $t1) = gettimeofday();
-		return [$idx, $t0.$t1, $data, $pre_hash]; 
-	}
-
-	my $ts_ans = "TS_NULL"; 
-	my $MOD_TOTAL = 1e12; 
-	my $PIC_NUM = 2222; 
-	if (@ARGV != 0)
-	{
-		$PIC_NUM = $ARGV[0]; 
-	}
-
-	while(1)
-	{
-		my ($t0, $t1) = gettimeofday();
-		my @e_b = ($idx, $t0.$t1, $data, $pre_hash);
-		$pre_hash = md5_hex("@e_b"); 
-		my $num = $pre_hash % $MOD_TOTAL; 
-		if ($num == $PIC_NUM)
-		{
-			$ts_ans = $e_b[1]; 
-			$e_b[-1] = $pre_hash; 
-			#say join "\t", @e_b; 
-			last;
-		}
-	}
-	
-	return [$idx, $ts_ans, $data, $pre_hash]; 
-}
