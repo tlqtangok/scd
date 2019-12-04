@@ -24,6 +24,7 @@ use MIME::Base64 qw( encode_base64 decode_base64);
 #use Expect::Simple;  # sudo cpan -i Expect::Simple
 use strict;
 use arybase; # this is used to make sure exe can be run!!!
+use feature qw(state);
 
 #use Expect;
 #
@@ -60,6 +61,10 @@ use File::Spec;
 #use Try::Tiny;
 use JSON; 
 use Encode; 
+
+use Digest::MD5;
+use Digest::MD5 qw(md5_hex);
+use Time::HiRes qw(gettimeofday);
 #use URI::Escape;
 #use utf8;
 #use Term::ReadKey;
@@ -95,16 +100,9 @@ my @capture_cmd = (
 
 ##################
 
+
 &main();
 
-#my $ip_ =  &pick_one_idle_cluster_ip(); 
-#say $ip_; 
-
-
-### sub list ###
-use Digest::MD5;
-use Digest::MD5 qw(md5_hex);
-use Time::HiRes qw(gettimeofday);
 
 #main_
 sub main()
@@ -280,6 +278,7 @@ sub main()
 
 
 ### sub list ###
+
 sub check_deps()
 {
     my $prog_name = $0; 
@@ -400,7 +399,16 @@ sub pick_one_idle_cluster_ip()
 
     @value_ip_all = values %h; 
     @value_ip_all = sort { $sort_f->($a) <=> $sort_f->($b) } @value_ip_all; 
-    return (split m/\:/, $value_ip_all[0])[1]; 
+
+    my $idx = 0; 
+    state $cnt_idx_to_pick = 0; 
+    if (@value_ip_all > 1)
+    {
+        $idx = $cnt_idx_to_pick % 2; 
+    }
+    $cnt_idx_to_pick++; 
+
+    return (split m/\:/, $value_ip_all[$idx])[1]; 
 }
 
 sub add_zero_if_lt_10($num)
