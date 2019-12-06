@@ -15,7 +15,7 @@ on B, run
 ```
 
 then you can sumit your command in the prompt.
-your command will be consumed by one of you Axxx machine.
+your command will be consumed by one of you slave.
 
 a log file will saved on each slave. 
 
