@@ -85,18 +85,24 @@ use Time::HiRes qw(gettimeofday);
 my $fn_scd_config = "scd.config"; 
 my $server = "localhost"; 
 #my $server = join "", reverse qw(m o c . s r e o g l a);
-
 my $server_port = "6379"; 
+my $username = "$ENV{USER}"; 
 
 &source_config_if_needed($fn_scd_config); 
 
-my $client_ip_r0 = `hostname -I`; $client_ip_r0 =~ s/ .*$//g; chomp($client_ip_r0);
+my $R_ = "redis-cli -h $server -p $server_port"; 
+
+my $slave_info_r0 = `hostname -I`; $slave_info_r0 =~ s/ .*$//g; chomp($slave_info_r0); 
+$slave_info_r0 =  merge_u_ip($username, $slave_info_r0);
+
+
 my $key_list_cluster_info_all = "cluster_info_all"; 
 my @capture_cmd = ( 
     ["get" ,  "cluster_info",],
     ["set" ,  "cluster_task", "XXX",],
 ); 
 
+my $MAX_IP_ALLOW = 256;
 
 ##################
 
@@ -110,26 +116,20 @@ sub main()
     #my $fn_run_cluster_task_log = "run_cluster_task.log";  `rm $fn_run_cluster_task_log ` if -e $fn_run_cluster_task_log;
     # redis-cli -h algoers.com  set cluster_task 'date'
     &check_deps();
-    &run_subtask_if_needed(\@ARGV);
+
+    &run_subtask_if_arg_meet(\@ARGV);
+
+    &run_td_sync_cluster_info();
+
+    &run_slave(); 
+
+}
 
 
-    my $td_sync_cluster_info = threads->create(
-        sub ()
-        {
-            while(1)
-            {
-                &get_cluster_info(); 
-                my $rand_num = int(rand(100));
-                my $sleep_seconds = 5 + ($rand_num % 3); 
-                sleep $sleep_seconds;  
-            }
-        }
-    );
-
-    $td_sync_cluster_info->detach(); 
-
-
-    open my $FP , "redis-cli -h $server monitor |"; 
+### sub list ###
+sub run_slave()
+{
+    open my $FP , "$R_ monitor |"; 
     while(<$FP>)
     {
         chomp; 
@@ -147,16 +147,16 @@ sub main()
             # redis-cli -h algoers.com set cluster_task '172.16.166.224:date'
             #say "- ok, @arr_cmd"; 
             my $task = $arr_cmd[-1];  $task =~ s|\s+$||;
-            my $client_ip = &pick_one_idle_cluster_ip();
+            my $slave_info = &pick_one_idle_cluster_ip();
 
-            if ($client_ip eq $client_ip_r0)
+            if ($slave_info eq $slave_info_r0)
             {
                 our $flag_task_finish : shared = 0;
                 our @top_cpu : shared = ();
                 our @top_mem : shared = ();
 
                 my $ts = &get_timestamp(); 
-                my $prompt = "- [$ts] [$client_ip] [$task]"; 
+                my $prompt = "- [$ts] [$slave_info] [$task]"; 
                 say $prompt;
 
                 my $td_top_cpu_memory = threads->create( sub ($,$,$){ 
@@ -199,7 +199,7 @@ sub main()
 
                         my $cmd_run_task_bash = qq{ bash -c ' $task ' 2>&1 } ;  
 
-                        `date`; # just wait for a while
+                        `which ls`; # just wait for a while
                         my $t0 = time();
                         my @cmd_out = qx( $cmd_run_task_bash ) ;  
                         $$flag_task_finish_ref = 1;
@@ -210,7 +210,7 @@ sub main()
 
                         my %h = (); 
                         $h{ts} = $ts;
-                        $h{ip} = $client_ip; 
+                        $h{ip} = $slave_info; 
                         $h{cmd} = $task; 
                         $h{output} = join "",@cmd_out;
                         $h{cost} = "${cost_second}s";
@@ -236,7 +236,7 @@ sub main()
 
                         # clean list cluster ips if too long
                         my $get_len_of_ip_all = sub (){
-                            my $len_of_ip_all = `redis-cli -h $server llen $key_list_cluster_info_all`;
+                            my $len_of_ip_all = `$R_ llen $key_list_cluster_info_all`;
                             my @arr_len_of_ip_all_ = split " ", $len_of_ip_all; 
                             my $len_of_ip_all_ = $arr_len_of_ip_all_[-1]; 
                             chomp($len_of_ip_all_); 
@@ -244,19 +244,16 @@ sub main()
                         };
 
                         my $len_of_ip_all_ = $get_len_of_ip_all->();
-                        my $MAX_IP_ALLOW = 25;
-
                         if ( $len_of_ip_all_ > $MAX_IP_ALLOW )
                         {
-                            my $rand_num = int(rand(10)) + 2;
+                            my $rand_num = int(rand(4)) + 2;
                             sleep $rand_num; 
                             my $len_of_ip_all_ = $get_len_of_ip_all->();
                             if ($len_of_ip_all_ > $MAX_IP_ALLOW)
                             {
-                                `redis-cli -h $server del $key_list_cluster_info_all`;
+                                `$R_ del $key_list_cluster_info_all`;
                             }
                         }
-                        
 
                     }, 
                     \$flag_task_finish,
@@ -267,8 +264,8 @@ sub main()
 
                 $td_top_cpu_memory->detach();
                 $td_task->detach();
-               
-                
+
+
 
             }
         }
@@ -276,11 +273,45 @@ sub main()
     close $FP; 
 }
 
+sub merge_u_ip($ $)
+{
+    my ($u, $i) = @_; 
+    return $u.'@'.$i; 
+}
 
-### sub list ###
+sub run_td_sync_cluster_info()
+{
 
+
+    my $td_sync_cluster_info = threads->create(
+        sub ()
+        {
+            state $cnt_sync_cluster_info = 0; 
+            while(1)
+            {
+                &get_cluster_info(); 
+                my $rand_num = int(rand(100));
+                my $sleep_seconds = 5 + ($rand_num % 3); 
+
+                $cnt_sync_cluster_info++; 
+                if ($cnt_sync_cluster_info > $MAX_IP_ALLOW * 10)
+                {
+                    my $rand_num = int(rand(4)) + 2;
+                    `$R_ del $key_list_cluster_info_all`;
+                }
+                sleep $sleep_seconds;  
+            }
+        }
+    );
+
+    $td_sync_cluster_info->detach(); 
+    return $td_sync_cluster_info;
+
+
+}
 sub check_deps()
 {
+    # 1. check program instance number
     my $prog_name = $0; 
     if ($prog_name =~ m/slave|submit/)
     {
@@ -292,6 +323,21 @@ sub check_deps()
             &assert_use_die(0==1, "- already run [$prog_name] on this machine ! \n"); 
         }
     }
+    # 2. check if has redis-cli
+    if ( `which redis-cli` eq "" )
+    {
+        &assert_use_die(0==1, "- please run [sudo apt install redis-server] to install redis-cli.\n"); 
+    }
+
+    # 3. check other utils
+    my @arr_utils = qw(hostname pgrep top cat ls); 
+    map
+    {
+        if (`which $_` eq "") 
+        {
+            &assert_use_die(0==1, "- please make sure your OS has [$_].\n"); 
+        }
+    }@arr_utils;
 }
 
 sub assert_use_die($, $)
@@ -319,7 +365,7 @@ sub source_config_if_needed($)
     }
 }
 
-sub run_subtask_if_needed()
+sub run_subtask_if_arg_meet()
 {
     my $argv_ref = shift; 
         if ($0 =~  m/submit/) 
@@ -328,7 +374,7 @@ sub run_subtask_if_needed()
             {
                 for(@$argv_ref)
                 {
-                    my $cmd_to_send_cluster =  qq{ redis-cli -h $server  set cluster_task '$_' };
+                    my $cmd_to_send_cluster =  qq{ $R_ set cluster_task '$_' };
                     qx($cmd_to_send_cluster); 
                 }
                 exit 0; 
@@ -344,7 +390,7 @@ sub run_subtask_if_needed()
                     {
                         exit 0; 
                     }
-                    my $cmd_to_send_cluster =  qq{ redis-cli -h $server  set cluster_task '$_' };
+                    my $cmd_to_send_cluster =  qq{ $R_  set cluster_task '$_' };
                     qx($cmd_to_send_cluster); 
                 }
             }
@@ -356,9 +402,9 @@ sub get_cluster_info()
     #say "- ok, @arr_cmd"; 
     my $rand_num = int(rand(100));
     $rand_num = &add_zero_if_lt_10($rand_num); 
-    my $client_ip = $client_ip_r0; 
+    my $slave_info = $slave_info_r0; 
 
-    my $run_cmd_return_cluster_info = qq(redis-cli -h $server rpush $key_list_cluster_info_all $rand_num:$client_ip);
+    my $run_cmd_return_cluster_info = qq($R_ rpush $key_list_cluster_info_all $rand_num:$slave_info);
     #say "- get all cluster_info to list [$key_list_cluster_info_all] "; 
     #`redis-cli -h $server del $key_list_cluster_info_all`;
     `$run_cmd_return_cluster_info`;
@@ -367,7 +413,7 @@ sub get_cluster_info()
 sub pick_one_idle_cluster_ip()
 {
     #&get_cluster_info();  
-    my @value_ip_all = `redis-cli -h $server lrange $key_list_cluster_info_all 0 -1`; 
+    my @value_ip_all = `$R_ lrange $key_list_cluster_info_all 0 -1`; 
     chomp(@value_ip_all); 
 
     my $sort_f = sub ($e){
