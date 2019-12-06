@@ -1,5 +1,5 @@
 # scd
-Simple Command Dispatch System
+Smart Command Dispatch System
 
 # usage 
 if you have many machine to dispatch your command.  on machine A0, A1, A2, and so on.  run
