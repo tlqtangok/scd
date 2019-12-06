@@ -2,7 +2,8 @@
 Smart Command Dispatch System
 
 # usage 
-if you have many machine to dispatch your command.  on machine A0, A1, A2, and so on.  run
+if you have many machines to dispatch your commands. such as on machine A0, A1, A2, you don't have to login in via ssh to run your command there. just use scd's `slave` here !
+
 ```
 ./slave
 ```
