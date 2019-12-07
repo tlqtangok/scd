@@ -64,7 +64,7 @@ use Encode;
 
 use Digest::MD5;
 use Digest::MD5 qw(md5_hex);
-use Time::HiRes qw(gettimeofday);
+use Time::HiRes qw(sleep gettimeofday);
 #use URI::Escape;
 #use utf8;
 #use Term::ReadKey;
@@ -464,6 +464,7 @@ sub run_subtask_if_arg_meet()
                 for(@$argv_ref)
                 {
                     qx{ $R_ set cluster_task '$_'  };
+                    sleep 0.1;
                     $job_cnt++; 
                 }
 
@@ -478,12 +479,12 @@ sub run_subtask_if_arg_meet()
                         || $_ eq "q"
                         || $_ eq "exit")
                     {
-                        
                         last; 
                     }
                     else
                     {
                         qx{ $R_  set cluster_task '$_' };
+                        sleep 0.1; 
                         $job_cnt++; 
                     }
                 }
