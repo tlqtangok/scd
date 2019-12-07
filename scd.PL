@@ -92,14 +92,16 @@ my $username = "$ENV{USER}";
 
 my $R_ = "redis-cli -h $server -p $server_port"; 
 
-my $slave_info_r0 = `hostname -I`; $slave_info_r0 =~ s/ .*$//g; chomp($slave_info_r0); 
+my $slave_info_r0 = qx{hostname -I}; $slave_info_r0 =~ s/ .*$//g; chomp($slave_info_r0); 
 $slave_info_r0 =  merge_u_ip($username, $slave_info_r0);
 
 
 my $key_list_cluster_info_all = "cluster_info_all"; 
+my $key_list_cluster_ans_all = "cluster_ans_all"; 
 my @capture_cmd = ( 
     ["get" ,  "cluster_info",],
     ["set" ,  "cluster_task", "XXX",],
+    ["rpush",  $key_list_cluster_ans_all, "XXX",],
 ); 
 
 my $MAX_IP_ALLOW = 256;
@@ -115,6 +117,8 @@ sub main()
 {
     #my $fn_run_cluster_task_log = "run_cluster_task.log";  `rm $fn_run_cluster_task_log ` if -e $fn_run_cluster_task_log;
     # redis-cli -h algoers.com  set cluster_task 'date'
+
+    #$| = 1;
     &check_deps();
 
     &run_subtask_if_arg_meet(\@ARGV);
@@ -157,7 +161,13 @@ sub run_slave()
 
                 my $ts = &get_timestamp(); 
                 my $prompt = "- [$ts] [$slave_info] [$task]"; 
-                say $prompt;
+                if( $task ne "echo END_BATCH_CLUSTER_TASK" )
+                {
+                    say $prompt;
+                }
+
+                #my $prompt_to_submit = "[x] [$task]";  
+                #qx{$R_ rpush $key_list_cluster_ans_all '$prompt_to_submit' };
 
                 my $td_top_cpu_memory = threads->create( sub ($,$,$){ 
 
@@ -180,7 +190,7 @@ sub run_slave()
                             elsif ($e_line =~ m/KiB Mem/)
                             {
                                 my ($mem_used) = $e_line =~ m/(\d+?) used/; 
-                                push @$top_mem_ref, ($mem_used >> 10);
+                                push @$top_mem_ref, ($mem_used >> 10); # to MegaBytes
                             }
                         }
 
@@ -199,9 +209,9 @@ sub run_slave()
 
                         my $cmd_run_task_bash = qq{ bash -c ' $task ' 2>&1 } ;  
 
-                        `which ls`; # just wait for a while
+                        qx{which ls}; # just wait for a while
                         my $t0 = time();
-                        my @cmd_out = qx( $cmd_run_task_bash ) ;  
+                        my @cmd_out = qx{ $cmd_run_task_bash } ;  
                         $$flag_task_finish_ref = 1;
                         my $t1 = time(); 
 
@@ -231,12 +241,15 @@ sub run_slave()
                         my ($ts_only_date) = $ts =~ m/(^.*?)_/;
                         open my $FP_append_log, ">>", "run_cluster_task_${ts_only_date}.log";
                         #binmode($FP_append_log);  
+
                         say $FP_append_log $run_log_all;
                         close $FP_append_log; 
 
+                        qx{$R_ rpush $key_list_cluster_ans_all '$run_log_all' };
+
                         # clean list cluster ips if too long
                         my $get_len_of_ip_all = sub (){
-                            my $len_of_ip_all = `$R_ llen $key_list_cluster_info_all`;
+                            my $len_of_ip_all = qx{$R_ llen $key_list_cluster_info_all};
                             my @arr_len_of_ip_all_ = split " ", $len_of_ip_all; 
                             my $len_of_ip_all_ = $arr_len_of_ip_all_[-1]; 
                             chomp($len_of_ip_all_); 
@@ -251,7 +264,7 @@ sub run_slave()
                             my $len_of_ip_all_ = $get_len_of_ip_all->();
                             if ($len_of_ip_all_ > $MAX_IP_ALLOW)
                             {
-                                `$R_ del $key_list_cluster_info_all`;
+                                qx{$R_ del $key_list_cluster_info_all };
                             }
                         }
 
@@ -271,6 +284,75 @@ sub run_slave()
         }
     }
     close $FP; 
+}
+
+sub td_submit_get_all_cluster_ans()
+{
+    my $td_get_cluster_ans = threads->create
+    (
+        sub() {
+            qx{$R_ del $key_list_cluster_ans_all};
+
+            open my $FP_pipe, "$R_ monitor |" or die "- cannot open monitor pipe\n"; 
+
+            my $ts = &get_timestamp();  
+            my ($ts_only_date) = $ts =~ m/(^.*?)_/;
+            open my $FP_append_log, ">>", "run_cluster_task_all_${ts_only_date}.log" or die "- cannot open file log!\n";
+
+            my $flag_end_submit_batch = 0; 
+
+            my $save_start = 0; 
+
+            while(<$FP_pipe>)
+            {
+
+                my $loc_s = index($_, q(")); 
+                $_  = substr($_, $loc_s); 
+                my (@arr_cmd) = $_ =~  m/\"(.*?)\"/g; 
+
+                if ( "@arr_cmd[0..1]" eq "@{$capture_cmd[2]}[0..1]" )
+                {
+                    my @ans_from_cluster = qx{$R_ lrange $key_list_cluster_ans_all $save_start -1};
+
+                    $save_start += @ans_from_cluster;
+                    #qx{$R_ ltrim $key_list_cluster_ans_all $save_start -1 };
+                    chomp(@ans_from_cluster);
+                    #sleep 1;
+                    for my $e (@ans_from_cluster)
+                    {
+                        chomp($e);
+                        if ($e =~ m/^\[x\]/)
+                        {
+                            if ($e =~ m/echo END_BATCH_CLUSTER_TASK/)
+                            {
+                                $flag_end_submit_batch = 1; 
+                                sleep 1; 
+                                last;
+                            }
+                            else
+                            {
+                                say "- $e"; 
+                            }
+                        }
+                        elsif ($e =~ m/^\{/)
+                        {
+                            say $FP_append_log $e;
+                        }
+                    }
+
+
+                    if ($flag_end_submit_batch == 1)
+                    {
+                        exit 0; 
+                    } 
+                }
+
+            }
+            close $FP_pipe; 
+        }
+    );
+
+    return $td_get_cluster_ans;
 }
 
 sub merge_u_ip($ $)
@@ -297,7 +379,8 @@ sub run_td_sync_cluster_info()
                 if ($cnt_sync_cluster_info > $MAX_IP_ALLOW * 10)
                 {
                     my $rand_num = int(rand(4)) + 2;
-                    `$R_ del $key_list_cluster_info_all`;
+                    sleep $rand_num;
+                    qx{$R_ del $key_list_cluster_info_all };
                 }
                 sleep $sleep_seconds;  
             }
@@ -316,7 +399,7 @@ sub check_deps()
     if ($prog_name =~ m/slave|submit/)
     {
         my $cmd_run_this_instance = "pgrep -f $prog_name -al"; 
-        my @ans_ = `$cmd_run_this_instance`; 
+        my @ans_ = qx{$cmd_run_this_instance}; 
         if ( @ans_ >= 2 )
         {
             $prog_name =~ s/\.PL//; 
@@ -324,7 +407,7 @@ sub check_deps()
         }
     }
     # 2. check if has redis-cli
-    if ( `which redis-cli` eq "" )
+    if ( qx{which redis-cli} eq "" )
     {
         &assert_use_die(0==1, "- please run [sudo apt install redis-server] to install redis-cli.\n"); 
     }
@@ -333,7 +416,7 @@ sub check_deps()
     my @arr_utils = qw(hostname pgrep top cat ls); 
     map
     {
-        if (`which $_` eq "") 
+        if (qx{which $_} eq "") 
         {
             &assert_use_die(0==1, "- please make sure your OS has [$_].\n"); 
         }
@@ -370,17 +453,28 @@ sub run_subtask_if_arg_meet()
     my $argv_ref = shift; 
         if ($0 =~  m/submit/) 
         {
+
+            qx{$R_ del $key_list_cluster_ans_all};
+
+            #$td_get_cluster_ans->detach(); 
+
             if (@$argv_ref)
             {
+
                 for(@$argv_ref)
                 {
-                    my $cmd_to_send_cluster =  qq{ $R_ set cluster_task '$_' };
-                    qx($cmd_to_send_cluster); 
+                    qx{ $R_ set cluster_task '$_'  };
                 }
-                exit 0; 
+
+
+
+                #$td_get_cluster_ans->join(); 
+
+                #exit 0; 
             }
             else
             {
+                #$td_get_cluster_ans->detach(); 
                 while(<>)
                 {
                     chomp; 
@@ -388,15 +482,31 @@ sub run_subtask_if_arg_meet()
                         || $_ eq "q"
                         || $_ eq "exit")
                     {
-                        exit 0; 
+                        
+                        last; 
                     }
-                    my $cmd_to_send_cluster =  qq{ $R_  set cluster_task '$_' };
-                    qx($cmd_to_send_cluster); 
+                    else
+                    {
+                        qx{ $R_  set cluster_task '$_' };
+                    }
                 }
             }
+
+            say "- exit ...";
+            qx {  sleep 2 }; 
+            my $ts = &get_timestamp();  
+            my ($ts_only_date) = $ts =~ m/(^.*?)_/;
+            my @ans_from_cluster = qx{$R_ lrange $key_list_cluster_ans_all 0 -1};
+            qx{ rm -rf run_cluster_task_all_${ts_only_date}.log };
+
+            open my $FP_append_log, ">>", "run_cluster_task_all_${ts_only_date}.log" or die "- cannot open file log!\n";
+            say $FP_append_log join "", @ans_from_cluster;
+            close $FP_append_log; 
+
             exit 0; 
         }
 }
+
 sub get_cluster_info()
 {
     #say "- ok, @arr_cmd"; 
@@ -404,16 +514,15 @@ sub get_cluster_info()
     $rand_num = &add_zero_if_lt_10($rand_num); 
     my $slave_info = $slave_info_r0; 
 
-    my $run_cmd_return_cluster_info = qq($R_ rpush $key_list_cluster_info_all $rand_num:$slave_info);
     #say "- get all cluster_info to list [$key_list_cluster_info_all] "; 
     #`redis-cli -h $server del $key_list_cluster_info_all`;
-    `$run_cmd_return_cluster_info`;
+    qx{$R_ rpush $key_list_cluster_info_all $rand_num:$slave_info};
 }
 
 sub pick_one_idle_cluster_ip()
 {
     #&get_cluster_info();  
-    my @value_ip_all = `$R_ lrange $key_list_cluster_info_all 0 -1`; 
+    my @value_ip_all = qx{$R_ lrange $key_list_cluster_info_all 0 -1}; 
     chomp(@value_ip_all); 
 
     my $sort_f = sub ($e){
