@@ -7,4 +7,4 @@ scd_slave: scd.PL
 	@cp scd.PL slave.PL
 	@echo generate scd slave
 clean:
-	rm -f submit.PL slave.PL 
+	rm -f submit.PL slave.PL run_cluster_task_*.log
