@@ -104,7 +104,7 @@ my @capture_cmd = (
     ["rpush",  $key_list_cluster_ans_all, "XXX",],
 ); 
 
-my $MAX_IP_ALLOW = 256;
+my $MAX_IP_ALLOW = 128;
 
 ##################
 
@@ -118,7 +118,7 @@ sub main()
     #my $fn_run_cluster_task_log = "run_cluster_task.log";  `rm $fn_run_cluster_task_log ` if -e $fn_run_cluster_task_log;
     # redis-cli -h algoers.com  set cluster_task 'date'
 
-    #$| = 1;
+    $| = 1;
     &check_deps();
 
     &run_subtask_if_arg_meet(\@ARGV);
@@ -151,7 +151,9 @@ sub run_slave()
             # redis-cli -h algoers.com set cluster_task '172.16.166.224:date'
             #say "- ok, @arr_cmd"; 
             my $task = $arr_cmd[-1];  $task =~ s|\s+$||;
+
             my $slave_info = &pick_one_idle_cluster_ip();
+
 
             if ($slave_info eq $slave_info_r0)
             {
@@ -245,7 +247,7 @@ sub run_slave()
                         say $FP_append_log $run_log_all;
                         close $FP_append_log; 
 
-                        qx{$R_ rpush $key_list_cluster_ans_all '$run_log_all' };
+                        qx{$R_ rpush $key_list_cluster_ans_all '$task' };
 
                         # clean list cluster ips if too long
                         my $get_len_of_ip_all = sub (){
@@ -277,8 +279,6 @@ sub run_slave()
 
                 $td_top_cpu_memory->detach();
                 $td_task->detach();
-
-
 
             }
         }
@@ -363,8 +363,6 @@ sub merge_u_ip($ $)
 
 sub run_td_sync_cluster_info()
 {
-
-
     my $td_sync_cluster_info = threads->create(
         sub ()
         {
@@ -373,10 +371,11 @@ sub run_td_sync_cluster_info()
             {
                 &get_cluster_info(); 
                 my $rand_num = int(rand(100));
-                my $sleep_seconds = 5 + ($rand_num % 3); 
+                my $sleep_seconds = 4; 
+                #my $sleep_seconds = 4 + ($rand_num % 3); 
 
                 $cnt_sync_cluster_info++; 
-                if ($cnt_sync_cluster_info > $MAX_IP_ALLOW * 10)
+                if ($cnt_sync_cluster_info > $MAX_IP_ALLOW * 100)
                 {
                     my $rand_num = int(rand(4)) + 2;
                     sleep $rand_num;
@@ -457,6 +456,7 @@ sub run_subtask_if_arg_meet()
             qx{$R_ del $key_list_cluster_ans_all};
 
             #$td_get_cluster_ans->detach(); 
+            my $job_cnt = 0; 
 
             if (@$argv_ref)
             {
@@ -464,13 +464,9 @@ sub run_subtask_if_arg_meet()
                 for(@$argv_ref)
                 {
                     qx{ $R_ set cluster_task '$_'  };
+                    $job_cnt++; 
                 }
 
-
-
-                #$td_get_cluster_ans->join(); 
-
-                #exit 0; 
             }
             else
             {
@@ -488,20 +484,34 @@ sub run_subtask_if_arg_meet()
                     else
                     {
                         qx{ $R_  set cluster_task '$_' };
+                        $job_cnt++; 
                     }
                 }
             }
 
             say "- exit ...";
-            qx {  sleep 2 }; 
             my $ts = &get_timestamp();  
             my ($ts_only_date) = $ts =~ m/(^.*?)_/;
-            my @ans_from_cluster = qx{$R_ lrange $key_list_cluster_ans_all 0 -1};
-            qx{ rm -rf run_cluster_task_all_${ts_only_date}.log };
 
-            open my $FP_append_log, ">>", "run_cluster_task_all_${ts_only_date}.log" or die "- cannot open file log!\n";
-            say $FP_append_log join "", @ans_from_cluster;
-            close $FP_append_log; 
+            while(1)
+            {
+                my @ans_from_cluster = qx{$R_ lrange $key_list_cluster_ans_all 0 -1};
+                #say @ans_from_cluster; 
+
+                if (@ans_from_cluster+0 == $job_cnt )
+                {
+                    qx{ rm -rf run_cluster_task_all_${ts_only_date}.log };
+                    open my $FP_append_log, ">>", "run_cluster_task_all_${ts_only_date}.log" or die "- cannot open file log!\n";
+                    print $FP_append_log join "", @ans_from_cluster;
+                    close $FP_append_log; 
+
+                    qx{$R_ del $key_list_cluster_ans_all};
+                    say "- log file run_cluster_task_all_${ts_only_date}.log save successfully !\n"; 
+                    last;
+                }
+
+                sleep 2;
+            }
 
             exit 0; 
         }
