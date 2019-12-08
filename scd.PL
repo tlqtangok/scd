@@ -411,7 +411,7 @@ sub check_deps()
     }
 
     # 3. check other utils
-    my @arr_utils = qw(hostname pgrep top cat ls); 
+    my @arr_utils = qw(hostname pgrep top cat ls python); 
     map
     {
         if (qx{which $_} eq "") 
@@ -509,11 +509,20 @@ sub run_subtask_if_arg_meet()
             {
                 qx{ rm -rf run_cluster_task_all_${ts_only_date}.log };
                 open my $FP_append_log, ">>", "run_cluster_task_all_${ts_only_date}.log" or die "- cannot open file log!\n";
-                print $FP_append_log join "", @ans_from_cluster;
+                chomp(@ans_from_cluster); 
+                my $json_all = q|{|. qq{\n"ans_all":[\n\n};  
+                $json_all .= join ",\n", @ans_from_cluster; 
+                $json_all .= qq{\n\n]} . q|}|; 
+
+                #print $FP_append_log join ",", @ans_from_cluster;
+                print $FP_append_log $json_all;
                 close $FP_append_log; 
 
                 qx{$R_ del $key_list_cluster_ans_all};
                 say "- log file run_cluster_task_all_${ts_only_date}.log save successfully !\n"; 
+
+                my $pretty_json = qx{ python -m json.tool  run_cluster_task_all_${ts_only_date}.log > pretty.json  }; 
+                
                 last;
             }
 
