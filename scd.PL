@@ -63,7 +63,7 @@ use JSON;
 use Encode; 
 
 use Digest::MD5;
-use Digest::MD5 qw(md5_hex);
+use Digest::MD5 qw(md5_hex md5);
 use Time::HiRes qw(sleep gettimeofday);
 #use URI::Escape;
 #use utf8;
@@ -104,10 +104,9 @@ my @capture_cmd = (
     ["rpush",  $key_list_cluster_ans_all, "XXX",],
 ); 
 
-my $MAX_IP_ALLOW = 128;
-
+my $MAX_IP_ALLOW = 256;
+my @slave_info_all = (); 
 ##################
-
 
 &main();
 
@@ -123,8 +122,6 @@ sub main()
 
     &run_subtask_if_arg_meet(\@ARGV);
 
-    &run_td_sync_cluster_info();
-
     &run_slave(); 
 
 }
@@ -133,6 +130,7 @@ sub main()
 ### sub list ###
 sub run_slave()
 {
+    &get_cluster_info();
     open my $FP , "$R_ monitor |"; 
     while(<$FP>)
     {
@@ -143,7 +141,7 @@ sub run_slave()
 
         if ( "@arr_cmd[0..1]" eq "@{$capture_cmd[0]}[0..1]")
         {
-            say "- get all cluster_info to list [$key_list_cluster_info_all] "; 
+            #say "- get all cluster_info to list [$key_list_cluster_info_all] "; 
             &get_cluster_info(); 
         }
         elsif ( "@arr_cmd[0..1]" eq "@{$capture_cmd[1]}[0..1]" )
@@ -152,8 +150,9 @@ sub run_slave()
             #say "- ok, @arr_cmd"; 
             my $task = $arr_cmd[-1];  $task =~ s|\s+$||;
 
-            my $slave_info = &pick_one_idle_cluster_ip();
-
+            my $md5_task = md5_hex($task);
+            
+            my $slave_info = &pick_one_idle_cluster_ip($md5_task, \@slave_info_all);
 
             if ($slave_info eq $slave_info_r0)
             {
@@ -235,6 +234,8 @@ sub run_slave()
                             $h{mem}[$i] = $top_mem_ref->[$i]; 
                         }
 
+
+
                         my $run_log_all = decode_utf8( Dumper(encode_json(\%h)) );
                         my $sz_need =  length($run_log_all) - 1; 
                         $run_log_all = substr($run_log_all, 9, $sz_need - 9 - 2); 
@@ -247,7 +248,7 @@ sub run_slave()
                         say $FP_append_log $run_log_all;
                         close $FP_append_log; 
 
-                        qx{$R_ rpush $key_list_cluster_ans_all '$task' };
+                        qx{$R_ rpush $key_list_cluster_ans_all '$run_log_all' };
 
                         # clean list cluster ips if too long
                         my $get_len_of_ip_all = sub (){
@@ -367,11 +368,10 @@ sub run_td_sync_cluster_info()
         sub ()
         {
             state $cnt_sync_cluster_info = 0; 
-            while(1)
             {
                 &get_cluster_info(); 
                 my $rand_num = int(rand(100));
-                my $sleep_seconds = 4; 
+                my $sleep_seconds = 1; 
                 #my $sleep_seconds = 4 + ($rand_num % 3); 
 
                 $cnt_sync_cluster_info++; 
@@ -386,11 +386,10 @@ sub run_td_sync_cluster_info()
         }
     );
 
-    $td_sync_cluster_info->detach(); 
+    $td_sync_cluster_info->join(); 
     return $td_sync_cluster_info;
-
-
 }
+
 sub check_deps()
 {
     # 1. check program instance number
@@ -450,72 +449,79 @@ sub source_config_if_needed($)
 sub run_subtask_if_arg_meet()
 {
     my $argv_ref = shift; 
-        if ($0 =~  m/submit/) 
+    if ($0 =~  m/submit/) 
+    {
+
+        qx{$R_ del $key_list_cluster_info_all };
+        qx{$R_ del $key_list_cluster_ans_all};
+
+        my $rise_signal_to_slave_to_sync_its_ip = "@{$capture_cmd[0]}[0..1]";
+        qx{$R_ $rise_signal_to_slave_to_sync_its_ip }; 
+        sleep 2;
+
+        #&run_td_sync_cluster_info();
+
+        #$td_get_cluster_ans->detach(); 
+        my $job_cnt = 0; 
+
+        if (@$argv_ref)
         {
 
-            qx{$R_ del $key_list_cluster_ans_all};
-
-            #$td_get_cluster_ans->detach(); 
-            my $job_cnt = 0; 
-
-            if (@$argv_ref)
+            for(@$argv_ref)
             {
+                qx{ $R_ set cluster_task '$_'  };
+                sleep 0.1;
+                $job_cnt++; 
+            }
 
-                for(@$argv_ref)
+        }
+        else
+        {
+            #$td_get_cluster_ans->detach(); 
+            while(<>)
+            {
+                chomp; 
+                if ($_ eq "quit" 
+                    || $_ eq "q"
+                    || $_ eq "exit")
                 {
-                    qx{ $R_ set cluster_task '$_'  };
-                    sleep 0.1;
+                    last; 
+                }
+                else
+                {
+                    qx{ $R_  set cluster_task '$_' };
+                    sleep 0.1; 
                     $job_cnt++; 
                 }
-
             }
-            else
-            {
-                #$td_get_cluster_ans->detach(); 
-                while(<>)
-                {
-                    chomp; 
-                    if ($_ eq "quit" 
-                        || $_ eq "q"
-                        || $_ eq "exit")
-                    {
-                        last; 
-                    }
-                    else
-                    {
-                        qx{ $R_  set cluster_task '$_' };
-                        sleep 0.1; 
-                        $job_cnt++; 
-                    }
-                }
-            }
-
-            say "- exit ...";
-            my $ts = &get_timestamp();  
-            my ($ts_only_date) = $ts =~ m/(^.*?)_/;
-
-            while(1)
-            {
-                my @ans_from_cluster = qx{$R_ lrange $key_list_cluster_ans_all 0 -1};
-                #say @ans_from_cluster; 
-
-                if (@ans_from_cluster+0 == $job_cnt )
-                {
-                    qx{ rm -rf run_cluster_task_all_${ts_only_date}.log };
-                    open my $FP_append_log, ">>", "run_cluster_task_all_${ts_only_date}.log" or die "- cannot open file log!\n";
-                    print $FP_append_log join "", @ans_from_cluster;
-                    close $FP_append_log; 
-
-                    qx{$R_ del $key_list_cluster_ans_all};
-                    say "- log file run_cluster_task_all_${ts_only_date}.log save successfully !\n"; 
-                    last;
-                }
-
-                sleep 2;
-            }
-
-            exit 0; 
         }
+
+        say "- exit ...";
+        my $ts = &get_timestamp();  
+        my ($ts_only_date) = $ts =~ m/(^.*?)_/;
+
+        while(1)
+        {
+            my @ans_from_cluster = qx{$R_ lrange $key_list_cluster_ans_all 0 -1};
+            #say @ans_from_cluster; 
+
+            if (@ans_from_cluster+0 == $job_cnt )
+            {
+                qx{ rm -rf run_cluster_task_all_${ts_only_date}.log };
+                open my $FP_append_log, ">>", "run_cluster_task_all_${ts_only_date}.log" or die "- cannot open file log!\n";
+                print $FP_append_log join "", @ans_from_cluster;
+                close $FP_append_log; 
+
+                qx{$R_ del $key_list_cluster_ans_all};
+                say "- log file run_cluster_task_all_${ts_only_date}.log save successfully !\n"; 
+                last;
+            }
+
+            sleep 2;
+        }
+
+        exit 0; 
+    }
 }
 
 sub get_cluster_info()
@@ -530,10 +536,20 @@ sub get_cluster_info()
     qx{$R_ rpush $key_list_cluster_info_all $rand_num:$slave_info};
 }
 
-sub pick_one_idle_cluster_ip()
+sub pick_one_idle_cluster_ip($, \@)
 {
+    my $md5_task =  shift;
+    my $slave_info_all_ref = shift;
     #&get_cluster_info();  
-    my @value_ip_all = qx{$R_ lrange $key_list_cluster_info_all 0 -1}; 
+    my @value_ip_all = (@$slave_info_all_ref); 
+
+    state $cnt_need_sync_cluster_info = 0; 
+    if (@value_ip_all == 0 || $cnt_need_sync_cluster_info % (20 * @value_ip_all) == 0)
+    {
+        @value_ip_all = qx{$R_ lrange $key_list_cluster_info_all 0 -1}; 
+        #say "- sync"; 
+    }
+    $cnt_need_sync_cluster_info++; 
     chomp(@value_ip_all); 
 
     my $sort_f = sub ($e){
@@ -567,13 +583,13 @@ sub pick_one_idle_cluster_ip()
     @value_ip_all = sort { $sort_f->($a) <=> $sort_f->($b) } @value_ip_all; 
 
     my $idx = 0; 
-    state $cnt_idx_to_pick = 0; 
     if (@value_ip_all > 1)
     {
-        $idx = $cnt_idx_to_pick % 2; 
+        my $sz = @value_ip_all; 
+        $idx = ord(substr($md5_task, length($md5_task) - 1, 1)) % $sz;
     }
-    $cnt_idx_to_pick++; 
 
+    @$slave_info_all_ref = (@value_ip_all); 
     return (split m/\:/, $value_ip_all[$idx])[1]; 
 }
 
