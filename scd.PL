@@ -457,6 +457,8 @@ sub run_subtask_if_arg_meet()
 
         my $rise_signal_to_slave_to_sync_its_ip = "@{$capture_cmd[0]}[0..1]";
         qx{$R_ $rise_signal_to_slave_to_sync_its_ip }; 
+        
+        say "wait for initialize ...";
         sleep 2;
 
         #&run_td_sync_cluster_info();
@@ -478,6 +480,7 @@ sub run_subtask_if_arg_meet()
         else
         {
             #$td_get_cluster_ans->detach(); 
+            print ">";
             while(<>)
             {
                 chomp; 
@@ -489,6 +492,7 @@ sub run_subtask_if_arg_meet()
                 }
                 else
                 {
+                    print ">";
                     qx{ $R_  set cluster_task '$_' };
                     sleep 0.1; 
                     $job_cnt++; 
