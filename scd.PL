@@ -148,9 +148,10 @@ sub run_slave()
         {
             # redis-cli -h algoers.com set cluster_task '172.16.166.224:date'
             #say "- ok, @arr_cmd"; 
-            my $task = $arr_cmd[-1];  $task =~ s|\s+$||;
-
+            my $task = $arr_cmd[-1];  
             my $md5_task = md5_hex($task);
+            $task =~ s|\s+?\#.*$||;
+
             
             my $slave_info = &pick_one_idle_cluster_ip($md5_task, \@slave_info_all);
 
@@ -464,14 +465,24 @@ sub run_subtask_if_arg_meet()
         #&run_td_sync_cluster_info();
 
         #$td_get_cluster_ans->detach(); 
+        my $wrap_task_with_ts = sub ($){
+            my $task = shift;
+            chomp ($task);
+            my ($t0, $t1) = gettimeofday(); 
+            $task .= " # $t1"; 
+            return $task;
+        };
+
         my $job_cnt = 0; 
 
         if (@$argv_ref)
         {
 
+
             for(@$argv_ref)
             {
-                qx{ $R_ set cluster_task '$_'  };
+                my $task = $wrap_task_with_ts->($_); 
+                qx{ $R_ set cluster_task '$task'  };
                 sleep 0.1;
                 $job_cnt++; 
             }
@@ -493,7 +504,8 @@ sub run_subtask_if_arg_meet()
                 else
                 {
                     print ">";
-                    qx{ $R_  set cluster_task '$_' };
+                    my $task = $wrap_task_with_ts->($_); 
+                    qx{ $R_ set cluster_task '$task'  };
                     sleep 0.1; 
                     $job_cnt++; 
                 }
