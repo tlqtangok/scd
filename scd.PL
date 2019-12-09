@@ -526,7 +526,7 @@ sub run_subtask_if_arg_meet()
                 chomp(@ans_from_cluster); 
                 my $json_all = q|{|. qq{\n"ans_all":[\n\n};  
                 $json_all .= join ",\n", @ans_from_cluster; 
-                $json_all .= qq{\n\n]} . q|}|; 
+                $json_all .= qq{\n\n]} . q|}|. "\n"; 
 
                 #print $FP_append_log join ",", @ans_from_cluster;
                 print $FP_append_log $json_all;
