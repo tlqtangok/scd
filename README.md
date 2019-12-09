@@ -3,7 +3,7 @@ Smart Command Dispatch System
 
 # usage 
 
-this is a build-version of ubuntu-x64 version there.
+there is a build-version of ubuntu-x64 version there.
 one may run script:
 ```
 cd rel
