@@ -115,7 +115,6 @@ my @slave_info_all = ();
 sub main()
 {
     #my $fn_run_cluster_task_log = "run_cluster_task.log";  `rm $fn_run_cluster_task_log ` if -e $fn_run_cluster_task_log;
-    # redis-cli -h algoers.com  set cluster_task 'date'
 
     $| = 1;
     &check_deps();
@@ -146,7 +145,6 @@ sub run_slave()
         }
         elsif ( "@arr_cmd[0..1]" eq "@{$capture_cmd[1]}[0..1]" )
         {
-            # redis-cli -h algoers.com set cluster_task '172.16.166.224:date'
             #say "- ok, @arr_cmd"; 
             my $task = $arr_cmd[-1];  
             my $md5_task = md5_hex($task);
