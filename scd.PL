@@ -147,7 +147,8 @@ sub run_slave()
         {
             #say "- ok, @arr_cmd"; 
             my $task = $arr_cmd[-1];  
-            my $md5_task = md5_hex($task);
+            my ($ts_t1) = $task =~ m/\#(\d+)/;
+            my $md5_task = $ts_t1;
             $task =~ s|\s+?\#.*$||;
 
             
@@ -467,7 +468,7 @@ sub run_subtask_if_arg_meet()
             my $task = shift;
             chomp ($task);
             my ($t0, $t1) = gettimeofday(); 
-            $task .= " # $t1"; 
+            $task .= " #$t1"; 
             return $task;
         };
 
